@@ -246,17 +246,21 @@ def q_funnel(prev: Period, cur: Period) -> str:
     Each step is checked on its own, not in a fixed order: guests and returning accounts skip the
     welcome setup in the app, so a strict install -> sign in -> setup -> practice order would count
     them as dropping out during setup and could never count them as practising.
+
+    On iPhones the install event often arrives a few seconds after the first screen, so steps are
+    timed from whichever comes first, and a screen up to an hour before the install event counts.
     """
     events = ("Application Installed", "$screen") + SIGNED_IN + (SETUP_STARTED, SETUP_DONE) + FIRST_PRACTICE
 
     def within_a_day(condition: str) -> str:
         return (f"windowFunnel(86400)(toUnixTimestamp(timestamp), "
-                f"event = 'Application Installed', {condition}) >= 2")
+                f"event IN ('Application Installed', '$screen'), {condition}) >= 2")
 
     return f"""
 SELECT {_period(cur.start, 'installed_at')} AS period,
        toInt(count()) AS installed,
-       toInt(countIf(saw_screen)) AS saw_screen,
+       toInt(countIf(arrayExists(t -> t >= toUnixTimestamp(installed_at) - 3600
+                                   AND t < toUnixTimestamp(installed_at) + 86400, screen_times))) AS saw_screen,
        toInt(countIf(logged_in OR guest)) AS signed_in,
        toInt(countIf(logged_in AND setup_started)) AS new_accounts,
        toInt(countIf(logged_in AND NOT setup_started)) AS returning_accounts,
@@ -266,7 +270,7 @@ SELECT {_period(cur.start, 'installed_at')} AS period,
 FROM (
   SELECT person_id,
          minIf(timestamp, event = 'Application Installed') AS installed_at,
-         {within_a_day("event = '$screen'")} AS saw_screen,
+         groupArrayIf(toUnixTimestamp(timestamp), event = '$screen') AS screen_times,
          {within_a_day("event = 'auth_login_succeeded'")} AS logged_in,
          {within_a_day("event = 'auth_guest_started'")} AS guest,
          {within_a_day(f"event = '{SETUP_STARTED}'")} AS setup_started,
