@@ -386,19 +386,38 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
     ]
     if sum(prev["languages"].values()):
         sign_lines.append(f"{prev_name[0].upper() + prev_name[1:]}: {_lang_line(prev['languages'])}")
-    sign_lines += ["", "**New people, from install to first practice**"]
-    if f[0]:
-        steps = ["opened the app for the first time", "signed in or continued as a guest",
-                 "finished the welcome setup", "read or practised on day one"]
-        sign_lines.append(f"{n(f[0])} {steps[0]}")
-        for k in range(1, 4):
-            before = f" ({prev_name} {pct(pf[k], pf[0])})" if pf[0] else ""
-            sign_lines.append(f"→ {pct(f[k], f[0])} {steps[k]}{before}")
-        drops = [(f[k - 1] - f[k]) / f[0] for k in range(1, 4)]
-        worst = max(range(3), key=lambda k: drops[k])
-        where = ["before signing in", "during the welcome setup", "after setup, without reading or practising"][worst]
-        tenths = round(drops[worst] * 10)
-        sign_lines.append(f"Biggest drop: **{'about ' + str(tenths) if tenths else 'under 1'} in 10 left {where}.**")
+    sign_lines += ["", "**New people, from install to first practice** (within one day of installing)"]
+    if f["installed"]:
+        i, pi = f["installed"], pf["installed"]
+
+        def step(label: str, k: str, base: int | None = None, pbase: int | None = None) -> str:
+            b, pb = (i, pi) if base is None else (base, pbase)
+            before = f" ({prev_name} {pct(pf[k], pb)})" if pb else ""
+            return f"→ {pct(f[k], b)} {label}{before}"
+
+        sign_lines += [
+            f"{n(i)} installed the app",
+            step("saw at least one screen", "saw_screen"),
+            step("signed in or continued as a guest", "signed_in"),
+            f"  {n(f['new_accounts'])} new accounts · {n(f['returning_accounts'])} returning accounts"
+            f" · {n(f['guests'])} guests",
+        ]
+        if f["new_accounts"]:
+            sign_lines.append(step("of new accounts finished the welcome setup", "finished_setup",
+                                   f["new_accounts"], pf["new_accounts"]))
+        sign_lines.append(step("read or practised on day one", "tried_practice"))
+        # Guests and returning accounts skip the welcome setup, so only new accounts can drop out there.
+        drops = {
+            "before any screen appeared": i - f["saw_screen"],
+            "before signing in": f["saw_screen"] - f["signed_in"],
+            "during the welcome setup": f["new_accounts"] - f["finished_setup"],
+            "after signing in, without reading or practising": f["signed_in"] - f["tried_practice"],
+        }
+        where, lost = max(drops.items(), key=lambda kv: kv[1])
+        sign_lines.append(f"Biggest drop: **{n(lost)} of {n(i)} left {where}.**")
+        if d(prev["start"]) < tracking_start + dt.timedelta(days=14):
+            sign_lines.append("_The first two weeks after the launch count existing users updating the app as "
+                              "new installs, so that period looks better than it was._")
     else:
         sign_lines.append("No new installs in this period.")
 

@@ -34,8 +34,11 @@ W, H, DPI = 6.4, 4.0, 200  # 1280 x 800 px: text stays legible when Discord show
 
 ACTIVITY_LABELS = [("read", "Read a text"), ("plan_open", "Opened a plan"), ("live", "Joined live session"),
                    ("mala", "Used mala counter"), ("plan_day", "Finished plan day"), ("timer", "Finished timer")]
-FUNNEL_STEPS = ["Opened the app\nfor the first time", "Signed in or\ncontinued as guest",
-                "Finished the\nwelcome setup", "Read or practised\non day one"]
+# (key in the report's funnel numbers, label). Every bar is a share of the people who installed.
+FUNNEL_STEPS = [("installed", "Installed\nthe app"), ("saw_screen", "Saw at least\none screen"),
+                ("signed_in", "Signed in or\ncontinued as guest"),
+                ("finished_setup", "New account,\nfinished setup"),
+                ("tried_practice", "Read or practised\non day one")]
 
 
 def _thousands(x, _pos=None):
@@ -230,10 +233,12 @@ def period_charts(kind: str, cur: dict, prev: dict, outdir: str,
                cur_label, prev_label, sub)
     out.append((name, f"Bar chart: people per activity, {span} compared with {prev_name}."))
 
-    if cur["funnel"][0]:
+    if cur["funnel"]["installed"]:
         name = f"{kind}-funnel.png"
-        sub = f"{cur['funnel'][0]:,} people installed the app {when} · within one day of installing"
-        funnel(os.path.join(outdir, name), FUNNEL_STEPS, cur["funnel"], prev["funnel"], new_label, prev_label, sub)
-        out.append((name, "Funnel chart: share of new installs who signed in, finished setup and read or "
-                          f"practised on day one, compared with {prev_name}."))
+        sub = f"{cur['funnel']['installed']:,} people installed the app {when} · within one day of installing"
+        keys, labels = [k for k, _ in FUNNEL_STEPS], [label for _, label in FUNNEL_STEPS]
+        funnel(os.path.join(outdir, name), labels, [cur["funnel"][k] for k in keys],
+               [prev["funnel"][k] for k in keys], new_label, prev_label, sub)
+        out.append((name, "Funnel chart: share of new installs who saw a screen, signed in, finished setup as a "
+                          f"new account and read or practised on day one, compared with {prev_name}."))
     return out

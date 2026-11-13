@@ -14,7 +14,10 @@ from .periods import DAY, Period
 Run = Callable[[str], list[dict]]
 
 SIGNED_IN = ("auth_login_succeeded", "auth_guest_started")
+SETUP_STARTED = "onboarding_started"  # only new accounts see the setup
 SETUP_DONE = "onboarding_completed"
+FUNNEL_KEYS = ("installed", "saw_screen", "signed_in", "new_accounts", "returning_accounts", "guests",
+               "finished_setup", "tried_practice")
 FIRST_PRACTICE = ("reader_opened", "group_event_live_entered", "plan_day_viewed", "mala_session_started",
                   "timer_started", "recitation_collection_opened")
 
@@ -238,22 +241,37 @@ FROM (
 
 
 def q_funnel(prev: Period, cur: Period) -> str:
-    """People who installed in each period, and how far they got, in order, within 24 hours of installing."""
-    events = ("Application Installed",) + SIGNED_IN + (SETUP_DONE,) + FIRST_PRACTICE
+    """People who installed in each period and what each did within 24 hours of installing.
+
+    Each step is checked on its own, not in a fixed order: guests and returning accounts skip the
+    welcome setup in the app, so a strict install -> sign in -> setup -> practice order would count
+    them as dropping out during setup and could never count them as practising.
+    """
+    events = ("Application Installed", "$screen") + SIGNED_IN + (SETUP_STARTED, SETUP_DONE) + FIRST_PRACTICE
+
+    def within_a_day(condition: str) -> str:
+        return (f"windowFunnel(86400)(toUnixTimestamp(timestamp), "
+                f"event = 'Application Installed', {condition}) >= 2")
+
     return f"""
 SELECT {_period(cur.start, 'installed_at')} AS period,
        toInt(count()) AS installed,
-       toInt(countIf(steps >= 2)) AS signed_in,
-       toInt(countIf(steps >= 3)) AS finished_setup,
-       toInt(countIf(steps >= 4)) AS tried_practice
+       toInt(countIf(saw_screen)) AS saw_screen,
+       toInt(countIf(logged_in OR guest)) AS signed_in,
+       toInt(countIf(logged_in AND setup_started)) AS new_accounts,
+       toInt(countIf(logged_in AND NOT setup_started)) AS returning_accounts,
+       toInt(countIf(guest AND NOT logged_in)) AS guests,
+       toInt(countIf(logged_in AND setup_started AND setup_done)) AS finished_setup,
+       toInt(countIf((logged_in OR guest) AND practised)) AS tried_practice
 FROM (
   SELECT person_id,
          minIf(timestamp, event = 'Application Installed') AS installed_at,
-         windowFunnel(86400)(toUnixTimestamp(timestamp),
-                             event = 'Application Installed',
-                             event IN {_in(SIGNED_IN)},
-                             event = '{SETUP_DONE}',
-                             event IN {_in(FIRST_PRACTICE)}) AS steps
+         {within_a_day("event = '$screen'")} AS saw_screen,
+         {within_a_day("event = 'auth_login_succeeded'")} AS logged_in,
+         {within_a_day("event = 'auth_guest_started'")} AS guest,
+         {within_a_day(f"event = '{SETUP_STARTED}'")} AS setup_started,
+         {within_a_day(f"event = '{SETUP_DONE}'")} AS setup_done,
+         {within_a_day(f"event IN {_in(FIRST_PRACTICE)}")} AS practised
   FROM events
   WHERE timestamp >= {_ts(prev.start)}
     AND timestamp < {_ts(cur.end + DAY)}
@@ -370,7 +388,7 @@ def period_data(run: Run, prev: Period, cur: Period) -> dict:
             "activities": {key: _num(act.get(col)) for key, col in ACTIVITY_COLUMNS.items()},
             "platform": platform,
             "languages": languages,
-            "funnel": [_num(fun.get(k)) for k in ("installed", "signed_in", "finished_setup", "tried_practice")],
+            "funnel": {k: _num(fun.get(k)) for k in FUNNEL_KEYS},
             "came_back": None,
         }
 
