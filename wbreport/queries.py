@@ -16,8 +16,8 @@ Run = Callable[[str], list[dict]]
 SIGNED_IN = ("auth_login_succeeded", "auth_guest_started")
 SETUP_STARTED = "onboarding_started"  # only new accounts see the setup
 SETUP_DONE = "onboarding_completed"
-FUNNEL_KEYS = ("installed", "saw_screen", "signed_in", "new_accounts", "returning_accounts", "guests",
-               "finished_setup", "tried_practice")
+FUNNEL_KEYS = ("installed", "saw_screen", "returning", "new_people", "signed_up", "guests", "finished_setup",
+               "practised", "returning_practised")
 FIRST_PRACTICE = ("reader_opened", "group_event_live_entered", "plan_day_viewed", "mala_session_started",
                   "timer_started", "recitation_collection_opened")
 
@@ -241,14 +241,15 @@ FROM (
 
 
 def q_funnel(prev: Period, cur: Period) -> str:
-    """People who installed in each period and what each did within 24 hours of installing.
+    """New people who installed in each period, and what each did within 24 hours of installing.
 
-    Each step is checked on its own, not in a fixed order: guests and returning accounts skip the
-    welcome setup in the app, so a strict install -> sign in -> setup -> practice order would count
-    them as dropping out during setup and could never count them as practising.
-
-    On iPhones the install event often arrives a few seconds after the first screen, so steps are
-    timed from whichever comes first, and a screen up to an hour before the install event counts.
+    - Installs that never showed a screen (the app started in the background) are left out.
+    - Returning users (an existing account, so no welcome setup) are counted on their own, not as new people.
+    - Sign up and sign in are the same button; a sign-up is a login followed by the welcome setup,
+      which the app only shows to new accounts. Guests never see the setup.
+    - Each step is checked on its own, not in a fixed order. On iPhones the install event often arrives a
+      few seconds after the first screen, so steps are timed from whichever comes first, and a screen up to
+      an hour before the install event counts.
     """
     events = ("Application Installed", "$screen") + SIGNED_IN + (SETUP_STARTED, SETUP_DONE) + FIRST_PRACTICE
 
@@ -257,31 +258,39 @@ def q_funnel(prev: Period, cur: Period) -> str:
                 f"event IN ('Application Installed', '$screen'), {condition}) >= 2")
 
     return f"""
-SELECT {_period(cur.start, 'installed_at')} AS period,
+SELECT period,
        toInt(count()) AS installed,
-       toInt(countIf(arrayExists(t -> t >= toUnixTimestamp(installed_at) - 3600
-                                   AND t < toUnixTimestamp(installed_at) + 86400, screen_times))) AS saw_screen,
-       toInt(countIf(logged_in OR guest)) AS signed_in,
-       toInt(countIf(logged_in AND setup_started)) AS new_accounts,
-       toInt(countIf(logged_in AND NOT setup_started)) AS returning_accounts,
-       toInt(countIf(guest AND NOT logged_in)) AS guests,
-       toInt(countIf(logged_in AND setup_started AND setup_done)) AS finished_setup,
-       toInt(countIf((logged_in OR guest) AND practised)) AS tried_practice
+       toInt(countIf(is_opened)) AS saw_screen,
+       toInt(countIf(is_returning)) AS returning,
+       toInt(countIf(is_new)) AS new_people,
+       toInt(countIf(is_new AND did_login AND did_setup_start)) AS signed_up,
+       toInt(countIf(is_new AND did_guest AND NOT did_login)) AS guests,
+       toInt(countIf(is_new AND did_login AND did_setup_start AND did_setup)) AS finished_setup,
+       toInt(countIf(is_new AND (did_login OR did_guest) AND did_practise)) AS practised,
+       toInt(countIf(is_returning AND did_practise)) AS returning_practised
 FROM (
-  SELECT person_id,
-         minIf(timestamp, event = 'Application Installed') AS installed_at,
-         groupArrayIf(toUnixTimestamp(timestamp), event = '$screen') AS screen_times,
-         {within_a_day("event = 'auth_login_succeeded'")} AS logged_in,
-         {within_a_day("event = 'auth_guest_started'")} AS guest,
-         {within_a_day(f"event = '{SETUP_STARTED}'")} AS setup_started,
-         {within_a_day(f"event = '{SETUP_DONE}'")} AS setup_done,
-         {within_a_day(f"event IN {_in(FIRST_PRACTICE)}")} AS practised
-  FROM events
-  WHERE timestamp >= {_ts(prev.start)}
-    AND timestamp < {_ts(cur.end + DAY)}
-    AND event IN {_in(events)}
-  GROUP BY person_id
-  HAVING installed_at >= {_ts(prev.start)} AND installed_at < {_ts(cur.end)}
+  SELECT {_period(cur.start, 'installed_at')} AS period,
+         arrayExists(t -> t >= toUnixTimestamp(installed_at) - 3600
+                          AND t < toUnixTimestamp(installed_at) + 86400, screen_times) AS is_opened,
+         is_opened AND did_login AND NOT did_setup_start AS is_returning,
+         is_opened AND NOT is_returning AS is_new,
+         did_login, did_guest, did_setup_start, did_setup, did_practise
+  FROM (
+    SELECT person_id,
+           minIf(timestamp, event = 'Application Installed') AS installed_at,
+           groupArrayIf(toUnixTimestamp(timestamp), event = '$screen') AS screen_times,
+           {within_a_day("event = 'auth_login_succeeded'")} AS did_login,
+           {within_a_day("event = 'auth_guest_started'")} AS did_guest,
+           {within_a_day(f"event = '{SETUP_STARTED}'")} AS did_setup_start,
+           {within_a_day(f"event = '{SETUP_DONE}'")} AS did_setup,
+           {within_a_day(f"event IN {_in(FIRST_PRACTICE)}")} AS did_practise
+    FROM events
+    WHERE timestamp >= {_ts(prev.start)}
+      AND timestamp < {_ts(cur.end + DAY)}
+      AND event IN {_in(events)}
+    GROUP BY person_id
+    HAVING installed_at >= {_ts(prev.start)} AND installed_at < {_ts(cur.end)}
+  )
 )
 GROUP BY period
 """

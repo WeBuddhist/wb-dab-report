@@ -13,6 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 from matplotlib.ticker import FuncFormatter, MaxNLocator  # noqa: E402
 
 from . import config  # noqa: E402
@@ -34,11 +36,9 @@ W, H, DPI = 6.4, 4.0, 200  # 1280 x 800 px: text stays legible when Discord show
 
 ACTIVITY_LABELS = [("read", "Read a text"), ("plan_open", "Opened a plan"), ("live", "Joined live session"),
                    ("mala", "Used mala counter"), ("plan_day", "Finished plan day"), ("timer", "Finished timer")]
-# (key in the report's funnel numbers, label). Every bar is a share of the people who installed.
-FUNNEL_STEPS = [("installed", "Installed\nthe app"), ("saw_screen", "Saw at least\none screen"),
-                ("signed_in", "Signed in or\ncontinued as guest"),
-                ("finished_setup", "New account,\nfinished setup"),
-                ("tried_practice", "Read or practised\non day one")]
+FUNNEL_STEPS = ["New people\nwho opened the app", "Signed up\nor continued as guest",
+                "Signed up and\nfinished setup", "Read or practised\non day one"]
+GUEST = "#F5D39A"  # lighter shade of NEW, for guests inside the "got in" bar
 
 
 def _thousands(x, _pos=None):
@@ -153,31 +153,54 @@ def activities(path, labels, cur, prev, cur_label, prev_label, subtitle):
     plt.close(fig)
 
 
-def funnel(path, steps, cur, prev, cur_label, prev_label, subtitle):
-    """Share of new installs reaching each step; the previous period as a white tick for comparison."""
+def funnel(path, cur, prev, prev_label, subtitle):
+    """New people from opening the app to first practice, as shares of the new people who opened it.
+
+    The second bar splits into people who signed up and guests. The previous period is a white tick.
+    """
     fig, ax = plt.subplots(figsize=(W, H), dpi=DPI)
     fig.subplots_adjust(left=0.335, right=0.94, top=0.72, bottom=0.15)
-    y = list(range(len(steps)))
-    cur_pct = [c / cur[0] * 100 for c in cur]
-    ax.barh(y, cur_pct, height=0.6, color=NEW, label=cur_label)
-    if prev[0]:
-        ax.scatter([c / prev[0] * 100 for c in prev], y, marker="|", s=900, linewidths=3, color=FG, zorder=3,
-                   label=prev_label)
-    for v, p, c in zip(y, cur_pct, cur):
-        inside = p > 30
-        ax.text(p - 1.5 if inside else p + 1.5, v, f"{p:.0f}%  ({_thousands(c)})", va="center",
-                ha="right" if inside else "left", fontsize=11.5, fontweight="bold",
+
+    def counts(f):
+        return [f["new_people"], f["signed_up"] + f["guests"], f["finished_setup"], f["practised"]]
+
+    y = list(range(len(FUNNEL_STEPS)))
+    cur_n, base = counts(cur), cur["new_people"]
+    cur_pct = [c / base * 100 for c in cur_n]
+    for v in (0, 2, 3):
+        ax.barh(v, cur_pct[v], height=0.6, color=NEW)
+    signed = cur["signed_up"] / base * 100
+    ax.barh(1, signed, height=0.6, color=NEW)
+    ax.barh(1, cur_pct[1] - signed, left=signed, height=0.6, color=GUEST)
+
+    prev_pct = [c / prev["new_people"] * 100 for c in counts(prev)] if prev["new_people"] else None
+    if prev_pct:
+        ax.scatter(prev_pct, y, marker="|", s=900, linewidths=3, color=FG, zorder=3)
+
+    labels = [f"{cur_pct[0]:.0f}%  ({_thousands(cur_n[0])})",
+              f"{cur_pct[1]:.0f}%  ({_thousands(cur['signed_up'])} + {_thousands(cur['guests'])})",
+              f"{cur_pct[2]:.0f}%  ({_thousands(cur_n[2])})", f"{cur_pct[3]:.0f}%  ({_thousands(cur_n[3])})"]
+    for v, p, text in zip(y, cur_pct, labels):
+        inside = p > 60
+        x = p - 1.5 if inside else max(p, prev_pct[v] if prev_pct else 0) + 2
+        ax.text(x, v, text, va="center", ha="right" if inside else "left", fontsize=11.5, fontweight="bold",
                 color=DARK_TEXT if inside else FG)
-    ax.set_yticks(y, steps)
+    ax.set_yticks(y, FUNNEL_STEPS)
     ax.tick_params(axis="y", labelcolor=FG, labelsize=12)
     ax.invert_yaxis()
     ax.set_xlim(0, 100)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _p: f"{x:.0f}%"))
     ax.grid(axis="x", color=GRID, lw=1)
-    ax.set_xlabel("Share of people who installed the app")
+    ax.set_xlabel("Share of new people who opened the app")
     ax.set_ylabel("Step")
-    _frame(ax, "From install to first practice", subtitle)
-    _legend(ax, [cur_label, prev_label], -0.49, 2, scatterpoints=1, markerscale=0.5)
+    _frame(ax, "New people: opening the app to first practice", subtitle)
+    handles = [Patch(color=NEW), Patch(color=GUEST)]
+    names = ["Signed up", "Guest"]
+    if prev_pct:
+        handles.append(Line2D([], [], marker="|", ls="", ms=18, mew=3, color=FG))
+        names.append(prev_label)
+    ax.legend(handles, names, loc="lower left", bbox_to_anchor=(-0.49, 1.02), ncol=3, frameon=False,
+              labelcolor=FG)
     fig.savefig(path)
     plt.close(fig)
 
@@ -233,12 +256,12 @@ def period_charts(kind: str, cur: dict, prev: dict, outdir: str,
                cur_label, prev_label, sub)
     out.append((name, f"Bar chart: people per activity, {span} compared with {prev_name}."))
 
-    if cur["funnel"]["installed"]:
+    f = cur["funnel"]
+    if f["new_people"]:
         name = f"{kind}-funnel.png"
-        sub = f"{cur['funnel']['installed']:,} people installed the app {when} · within one day of installing"
-        keys, labels = [k for k, _ in FUNNEL_STEPS], [label for _, label in FUNNEL_STEPS]
-        funnel(os.path.join(outdir, name), labels, [cur["funnel"][k] for k in keys],
-               [prev["funnel"][k] for k in keys], new_label, prev_label, sub)
-        out.append((name, "Funnel chart: share of new installs who saw a screen, signed in, finished setup as a "
-                          f"new account and read or practised on day one, compared with {prev_name}."))
+        sub = (f"{f['installed']:,} installs {when} · {f['installed'] - f['saw_screen']:,} never opened it · "
+               f"{f['returning']:,} returning (left out)")
+        funnel(os.path.join(outdir, name), f, prev["funnel"], prev_label, sub)
+        out.append((name, "Funnel chart: share of new people who opened the app and then signed up or continued "
+                          f"as a guest, finished setup, and read or practised on day one, compared with {prev_name}."))
     return out

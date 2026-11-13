@@ -386,38 +386,43 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
     ]
     if sum(prev["languages"].values()):
         sign_lines.append(f"{prev_name[0].upper() + prev_name[1:]}: {_lang_line(prev['languages'])}")
-    sign_lines += ["", "**New people, from install to first practice** (within one day of installing)"]
+    sign_lines += ["", "**New people, from opening the app to first practice** (within one day of installing)"]
     if f["installed"]:
-        i, pi = f["installed"], pf["installed"]
+        i, new, pnew = f["installed"], f["new_people"], pf["new_people"]
+        sign_lines.append(f"{n(i)} installs · {n(i - f['saw_screen'])} never opened the app · "
+                          f"{n(f['returning'])} returning users (not counted below)")
+    if f["new_people"]:
+        got_in, pgot_in = f["signed_up"] + f["guests"], pf["signed_up"] + pf["guests"]
 
-        def step(label: str, k: str, base: int | None = None, pbase: int | None = None) -> str:
-            b, pb = (i, pi) if base is None else (base, pbase)
-            before = f" ({prev_name} {pct(pf[k], pb)})" if pb else ""
-            return f"→ {pct(f[k], b)} {label}{before}"
+        def step(label: str, a: int, b: int, pa: int, pb: int) -> str:
+            before = f" ({prev_name} {pct(pa, pb)})" if pb else ""
+            return f"→ {pct(a, b)} {label}{before}"
 
         sign_lines += [
-            f"{n(i)} installed the app",
-            step("saw at least one screen", "saw_screen"),
-            step("signed in or continued as a guest", "signed_in"),
-            f"  {n(f['new_accounts'])} new accounts · {n(f['returning_accounts'])} returning accounts"
-            f" · {n(f['guests'])} guests",
+            f"**{n(new)} new people** opened the app",
+            step("signed up or continued as a guest", got_in, new, pgot_in, pnew),
+            f"  {n(f['signed_up'])} signed up · {n(f['guests'])} guests",
         ]
-        if f["new_accounts"]:
-            sign_lines.append(step("of new accounts finished the welcome setup", "finished_setup",
-                                   f["new_accounts"], pf["new_accounts"]))
-        sign_lines.append(step("read or practised on day one", "tried_practice"))
-        # Guests and returning accounts skip the welcome setup, so only new accounts can drop out there.
+        if f["signed_up"]:
+            sign_lines.append(step("of those who signed up finished the welcome setup",
+                                   f["finished_setup"], f["signed_up"], pf["finished_setup"], pf["signed_up"]))
+        sign_lines.append(step("read or practised on day one", f["practised"], new, pf["practised"], pnew))
+        # Guests never see the welcome setup, so only people who signed up can drop out there.
         drops = {
-            "before any screen appeared": i - f["saw_screen"],
-            "before signing in": f["saw_screen"] - f["signed_in"],
-            "during the welcome setup": f["new_accounts"] - f["finished_setup"],
-            "after signing in, without reading or practising": f["signed_in"] - f["tried_practice"],
+            "left without signing up or continuing as a guest": new - got_in,
+            "signed up but didn't finish the welcome setup": f["signed_up"] - f["finished_setup"],
+            "got in but didn't read or practise on day one": got_in - f["practised"],
         }
-        where, lost = max(drops.items(), key=lambda kv: kv[1])
-        sign_lines.append(f"Biggest drop: **{n(lost)} of {n(i)} left {where}.**")
+        reason, lost = max(drops.items(), key=lambda kv: kv[1])
+        sign_lines.append(f"Biggest drop: **{n(lost)} of {n(new)} new people {reason}.**")
+        if f["returning"]:
+            sign_lines.append(f"Returning users: {n(f['returning'])}, of whom {n(f['returning_practised'])} "
+                              "read or practised on day one")
         if d(prev["start"]) < tracking_start + dt.timedelta(days=14):
             sign_lines.append("_The first two weeks after the launch count existing users updating the app as "
                               "new installs, so that period looks better than it was._")
+    elif f["installed"]:
+        sign_lines.append("None of them opened the app.")
     else:
         sign_lines.append("No new installs in this period.")
 
