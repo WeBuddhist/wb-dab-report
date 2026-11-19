@@ -21,6 +21,9 @@ FUNNEL_KEYS = ("installed", "saw_screen", "returning", "new_people", "signed_up"
 FIRST_PRACTICE = ("reader_opened", "group_event_live_entered", "plan_day_viewed", "mala_session_started",
                   "timer_started", "recitation_collection_opened")
 
+# Counted as "practised" in the daily report: reading, plans, mala and timer.
+PRACTICE = ("reader_opened", "plan_day_viewed", "mala_session_started", "timer_started")
+
 # report key -> column in q_period_activity
 ACTIVITY_COLUMNS = {
     "read": "readers", "live": "live_people", "plan_open": "plan_openers", "plan_day": "plan_day_people",
@@ -52,11 +55,14 @@ SELECT toString(toDate(timestamp)) AS day,
        toInt(count(DISTINCT if(event = '$screen' AND properties.$os != 'Android', person_id, NULL))) AS apple,
        toInt(count(DISTINCT if(event = 'reader_opened', person_id, NULL))) AS readers,
        toInt(count(DISTINCT if(event = '$push_notification_opened', person_id, NULL))) AS push_open_people,
-       toInt(count(DISTINCT if(event = 'group_event_live_entered', person_id, NULL))) AS live_people
+       toInt(count(DISTINCT if(event = 'group_event_live_entered', person_id, NULL))) AS live_people,
+       toInt(count(DISTINCT if(event = 'Application Installed', person_id, NULL))) AS installs,
+       toInt(count(DISTINCT if(event IN {_in(PRACTICE)}, person_id, NULL))) AS practised
 FROM events
 WHERE timestamp >= {_ts(start)}
   AND timestamp < {_ts(end)}
-  AND event IN ('$screen', 'reader_opened', '$push_notification_opened', 'group_event_live_entered')
+  AND event IN {_in(("$screen", "$push_notification_opened", "group_event_live_entered", "Application Installed")
+                    + PRACTICE)}
 GROUP BY day
 ORDER BY day
 LIMIT 500
@@ -64,22 +70,47 @@ LIMIT 500
 
 
 def q_daily_new(start: dt.date, end: dt.date) -> str:
-    """People whose first-ever screen view falls on each day."""
+    """New users per day: people who installed the app that day and opened it (a screen appeared).
+
+    Counted from the install, not from a person's first screen: the app resets the PostHog ID on logout, an
+    expired login or cleared data, and the fresh ID's first screen would otherwise look like a new user even
+    though nothing was installed. A screen up to an hour before the install event counts, because on iPhones
+    the install event often arrives a few seconds after the first screen.
+    """
     return f"""
-SELECT toString(toDate(first_seen)) AS day,
+SELECT toString(toDate(installed_at)) AS day,
        toInt(count()) AS new_people
 FROM (
-  SELECT person_id, min(timestamp) AS first_seen
+  SELECT person_id,
+         minIf(timestamp, event = 'Application Installed') AS installed_at,
+         groupArrayIf(toUnixTimestamp(timestamp), event = '$screen') AS screen_times
   FROM events
-  WHERE event = '$screen'
-    AND timestamp >= {_ts(config.HISTORY_START)}
-    AND timestamp < {_ts(end)}
+  WHERE event IN ('Application Installed', '$screen')
+    AND timestamp >= {_ts(start - DAY)}
+    AND timestamp < {_ts(end + DAY)}
   GROUP BY person_id
+  HAVING installed_at >= {_ts(start)} AND installed_at < {_ts(end)}
 )
-WHERE first_seen >= {_ts(start)}
+WHERE arrayExists(t -> t >= toUnixTimestamp(installed_at) - 3600
+                       AND t < toUnixTimestamp(installed_at) + 86400, screen_times)
 GROUP BY day
 ORDER BY day
 LIMIT 500
+"""
+
+
+def q_totals(day: dt.date) -> str:
+    """Everyone who has used the app, and every install recorded, since tracking started: up to the end of the
+    report day, and up to the day before (the difference is what the report day added)."""
+    return f"""
+SELECT toInt(uniqIf(person_id, event = '$screen')) AS people,
+       toInt(uniqIf(person_id, event = '$screen' AND timestamp < {_ts(day)})) AS people_before,
+       toInt(uniqIf(person_id, event = 'Application Installed')) AS installs,
+       toInt(uniqIf(person_id, event = 'Application Installed' AND timestamp < {_ts(day)})) AS installs_before
+FROM events
+WHERE timestamp >= {_ts(config.TRACKING_START)}
+  AND timestamp < {_ts(day + DAY)}
+  AND event IN ('$screen', 'Application Installed')
 """
 
 
@@ -162,12 +193,14 @@ SELECT {_period(cur.start)} AS period,
        toInt(countIf(event = 'plan_day_completed')) AS plan_days_completed,
        toInt(count(DISTINCT if(event = 'mala_session_started', person_id, NULL))) AS mala_people,
        toInt(countIf(event = 'mala_round_completed')) AS mala_rounds,
-       toInt(count(DISTINCT if(event = 'timer_completed', person_id, NULL))) AS timer_people
+       toInt(count(DISTINCT if(event = 'timer_completed', person_id, NULL))) AS timer_people,
+       toInt(count(DISTINCT if(event = 'Application Installed', person_id, NULL))) AS installs,
+       toInt(count(DISTINCT if(event IN {_in(PRACTICE)}, person_id, NULL))) AS practised
 FROM events
 WHERE timestamp >= {_ts(prev.start)}
   AND timestamp < {_ts(cur.end)}
-  AND event IN ('$screen', 'reader_opened', 'group_event_live_entered', 'plan_viewed', 'plan_day_completed',
-                'mala_session_started', 'mala_round_completed', 'timer_completed')
+  AND event IN {_in(("$screen", "group_event_live_entered", "plan_viewed", "plan_day_completed",
+                     "mala_round_completed", "timer_completed", "Application Installed") + PRACTICE)}
 GROUP BY period
 """
 
@@ -356,7 +389,8 @@ def daily_series(run: Run, day: dt.date, days: int = 15) -> dict:
     new = run(q_daily_new(start, end))
     times = run(q_daily_time(start, end))
     series = {"dates": [x.isoformat() for x in dates]}
-    for key in ("people", "android", "apple", "readers", "push_open_people", "live_people"):
+    for key in ("people", "android", "apple", "readers", "push_open_people", "live_people", "installs",
+                "practised"):
         series[key] = _by_day(activity, key, dates)
     series["new"] = _by_day(new, "new_people", dates)
     series["typical_secs"] = _by_day(times, "median_secs", dates)
@@ -391,6 +425,8 @@ def period_data(run: Run, prev: Period, cur: Period) -> dict:
             "start": period.start.isoformat(),
             "end": period.last.isoformat(),
             "people": _num(act.get("people")),
+            "installs": _num(act.get("installs")),
+            "practised": _num(act.get("practised")),
             "new": sum(new_by_day[window]),
             "daily_dates": [x.isoformat() for x in period.dates()],
             "daily_people": people_by_day[window],
@@ -406,6 +442,8 @@ def period_data(run: Run, prev: Period, cur: Period) -> dict:
         }
 
     before, now = block("prev", prev, 0), block("cur", cur, prev.days)
+    totals = run(q_totals(cur.last))
+    now["totals"] = {k: _num(totals[0].get(k)) if totals else 0 for k in ("people", "installs")}
     if came_back and _num(came_back[0]["cohort"]):
         now["came_back"] = {"cohort": _num(came_back[0]["cohort"]), "back": _num(came_back[0]["back"])}
     texts = sorted((r for r in top if r["kind"] == "text"), key=lambda r: -_num(r["people"]))

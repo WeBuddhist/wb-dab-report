@@ -37,7 +37,7 @@ W, H, DPI = 6.4, 4.0, 200  # 1280 x 800 px: text stays legible when Discord show
 ACTIVITY_LABELS = [("read", "Read a text"), ("plan_open", "Opened a plan"), ("live", "Joined live session"),
                    ("mala", "Used mala counter"), ("plan_day", "Finished plan day"), ("timer", "Finished timer")]
 FUNNEL_STEPS = ["New people\nwho opened the app", "Signed up\nor continued as guest",
-                "Signed up and\nfinished setup", "Read or practised\non day one"]
+                "Signed up and\nfinished setup", "Read or practiced\non day one"]
 GUEST = "#F5D39A"  # lighter shade of NEW, for guests inside the "got in" bar
 
 
@@ -263,5 +263,5 @@ def period_charts(kind: str, cur: dict, prev: dict, outdir: str,
                f"{f['returning']:,} returning (left out)")
         funnel(os.path.join(outdir, name), f, prev["funnel"], prev_label, sub)
         out.append((name, "Funnel chart: share of new people who opened the app and then signed up or continued "
-                          f"as a guest, finished setup, and read or practised on day one, compared with {prev_name}."))
+                          f"as a guest, finished setup, and read or practiced on day one, compared with {prev_name}."))
     return out

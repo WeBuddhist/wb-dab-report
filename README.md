@@ -115,7 +115,12 @@ All figures are counts of people or medians across people, computed inside PostH
 | In the report | Counted as |
 |---|---|
 | People who opened the app | Unique people with at least one screen view in the mobile app |
-| New | People whose first screen view ever falls in the period |
+| New | People who installed the app in the period and opened it (a screen appeared within a day of the install). Counted from the install, not the first screen, because the app resets the PostHog ID on logout or an expired login, which would make old users look new |
+| Returning | People who used the app in the period and had already used it before: users minus new |
+| Daily / weekly / monthly active users | Same as "People who opened the app": unique people with at least one screen view in the day, week or month. Shown as the total after new and returning users |
+| Practiced (daily) | Unique people who, on the report day, opened a text in the reader, opened a plan day, started the mala or started the timer |
+| Downloads (daily) | Unique people with an "Application Installed" event on the report day. It includes installs where the app started in the background and nobody opened it (about 1 in 5 on Android), so it is a little higher than real downloads. Exact numbers are in the Play Console and App Store Connect |
+| Total since 25 Sep (monthly report only) | Users: unique people with at least one screen view since tracking started on 25 Sep. Downloads: unique people with an "Application Installed" event since then, which also includes existing users who updated from versions older than 2.31 in late September |
 | Came back | Of last week's (or month's) new people, the share who opened the app again in this one |
 | Time on screen | Each person's time with the app on screen that day: within each app session, the time from one event to the next, leaving out stretches in the background (from the app going to the background until it opens again). The report shows the middle person (half had it on screen longer, half shorter), the share under a minute and the share at half an hour or more. Times are rounded to what people can picture (45 sec, 4½ min, 12 min), and changes are given in minutes from those rounded figures |
 | Read a text, joined a live session, opened a plan | Unique people who opened the reader, entered a live group session, or opened a plan |
@@ -125,7 +130,6 @@ All figures are counts of people or medians across people, computed inside PostH
 | Installs, came from | Airbridge's app installs, by channel, in the app's timezone. "Organic" means no ad or tracking link. Meta's privacy rules round some of its counts down |
 | Crash-free | Of the app installations that opened the app (Firebase sessions), the share that had no crash closing the app. Firebase exports this once a day at no fixed time, so the daily report shows the day before yesterday, and a week or month stops there too |
 | Notifications reached | Firebase's share of notifications delivered to Android phones that share usage data with Google, weighted across all messages. It runs up to 5 days behind and has no iPhone figures. Weekly and monthly reports show the latest days Firebase has |
-The daily "What changed" line is written by fixed rules in `wbreport/text.py`: how many days in a row the number moved, whether one platform carried the change, and which signal (notification opens, live-session joins, first-time people) moved with it.
 
 Tracking went live on 25 Sep 2026 (`TRACKING_START` in `wbreport/config.py`). A comparison period that starts before that date shows its totals side by side and compares per-day figures only.
 

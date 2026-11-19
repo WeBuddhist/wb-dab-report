@@ -201,33 +201,38 @@ def what_changed(s: dict) -> str:
     return sentence + "."
 
 
+def tracking_start_label() -> str:  # "25 Sep"
+    start = config.TRACKING_START
+    return f"{start.day} {start:%b}"
+
+
 def daily_payload(s: dict, dashboard_url: str = config.DASHBOARD_URL, extras: dict | None = None) -> dict:
     i = len(s["people"]) - 1
     day, prev_day = d(s["dates"][i]), d(s["dates"][i - 1])
     vs_prev = f"{prev_day:%a}"
     week = slice(i - 7, i)  # the 7 days before the report day
 
-    def line(emoji, label, key, fmt=n):
-        cur, prev, avg = s[key][i], s[key][i - 1], mean(s[key][week])
-        return (f"{emoji} **{fmt(cur)}** {label}\n"
-                f"{change(cur, prev, vs_prev, fmt)} · {change(cur, avg, '7-day avg', fmt)}")
+    def line(emoji, label, key):
+        return f"{emoji} **{n(s[key][i])}** {label}"
 
     lines = []
     if s["people"][i] == 0:
         lines.append("⚠️ **No app activity was recorded for this day.** Data may not have reached PostHog.")
     def time_line():
-        cur, prev, avg = s["typical_secs"][i], s["typical_secs"][i - 1], mean(s["typical_secs"][week])
-        text = (f"⏱️ Half of people had the app on screen for **{minutes(cur)}** or more\n"
-                f"{time_change(cur, prev, vs_prev)} · {time_change(cur, avg, 'the 7-day average')}")
-        spread = time_spread({k: s[k][i] for k in ("timed_people", "quick_people", "long_people")})
-        return text + (f"\n{spread}" if spread else "")
+        return f"⏱️ **{minutes(s['typical_secs'][i])}** median time in the app"
 
+    new, total = s["new"][i], s["people"][i]
     lines += [
-        line("👥", "people opened the app", "people"),
-        line("🌱", "people opened the app for the first time", "new"),
-        line("📖", "people read a text", "readers"),
-        time_line(),
-        f"**What changed:** {what_changed(s)}",
+        "\n".join([
+            line("📲", "downloads", "installs"),
+            line("🙏", "practiced (reading, plans, mala or timer)", "practised"),
+            time_line(),
+        ]),
+        "\n".join([
+            f"🌱 **{n(new)}** new users",
+            f"🔁 **{n(max(total - new, 0))}** returning users",
+            f"👥 **{n(total)}** daily active users",
+        ]),
     ]
     avg_people = mean(s["people"][week])
     ratio = s["people"][i] / avg_people - 1 if avg_people else 0
@@ -307,42 +312,28 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
     plat, pplat = cur["platform"], prev["platform"]
     cb = cur.get("came_back")
 
-    # --- three-line summary ---
-    if prev_partial:
-        line1 = f"**{n(cur['people'])} people** used the app — about {n(avg_cur)} a day"
-        if avg_prev:
-            line1 += (f", {'up' if avg_cur >= avg_prev else 'down'} {abs(avg_cur / avg_prev - 1) * 100:.0f}% "
-                      f"from {prev_name}'s {n(avg_prev)} a day")
-        line1 += "."
-    elif prev["people"]:
-        p = cur["people"] / prev["people"] - 1
-        line1 = (f"**{n(cur['people'])} people** used the app, {'up' if p >= 0 else 'down'} "
-                 f"{abs(p) * 100:.0f}% from {prev_name} ({n(prev['people'])}).")
-    else:
-        line1 = f"**{n(cur['people'])} people** used the app."
-    line2 = f"**{n(cur['new'])} were new**"
-    if cb:
-        line2 += (f", and **{pct(cb['back'], cb['cohort'])}** of {newcomers} newcomers came back "
-                  f"({n(cb['back'])} of {n(cb['cohort'])})")
-    line2 += "."
-    acts = {"reading": a["read"], "live sessions": a["live"], "plans": a["plan_open"], "the mala counter": a["mala"]}
-    top_act = max(acts, key=acts.get)
-    top_text = cur["top_texts"][0] if cur.get("top_texts") else None
-    if top_act == "reading" and top_text:
-        line3 = f"Most popular: **reading** ({n(a['read'])} people), led by “{title(top_text[0])}” ({n(top_text[2])})."
-    elif top_text:
-        line3 = (f"Most popular: **{top_act}** ({n(acts[top_act])} people); most-read text: "
-                 f"“{title(top_text[0])}” ({n(top_text[2])}).")
-    else:
-        line3 = f"Most popular: **{top_act}** ({n(acts[top_act])} people)."
-
     if weekly:
         header = f"**📅 Weekly report · {day_label(start)} – {day_label(end)}{' (so far)' if preview else ''}**"
     elif preview:
         header = f"**🗓️ Monthly report · {start:%B} (1–{end.day} so far)**"
     else:
         header = f"**🗓️ Monthly report · {start:%B %Y}**"
-    content = "\n".join([header, f"• {line1}", f"• {line2}", f"• {line3}"])
+    summary = [
+        header,
+        "",
+        f"📲 **{n(cur.get('installs', 0))}** downloads",
+        f"🙏 **{n(cur.get('practised', 0))}** practiced (reading, plans, mala or timer)",
+        f"⏱️ **{minutes(cur['typical_secs'])}** median time in the app a day",
+        "",
+        f"🌱 **{n(cur['new'])}** new users",
+        f"🔁 **{n(max(cur['people'] - cur['new'], 0))}** returning users",
+        f"👥 **{n(cur['people'])}** {'weekly' if weekly else 'monthly'} active users",
+    ]
+    if not weekly:
+        t = cur.get("totals") or {}
+        summary += ["", f"**Total since {tracking_start_label()}:** **{n(t.get('people', 0))}** users · "
+                        f"**{n(t.get('installs', 0))}** downloads"]
+    content = "\n".join(summary)
 
     # --- People ---
     people_lines = [
@@ -406,18 +397,18 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
         if f["signed_up"]:
             sign_lines.append(step("of those who signed up finished the welcome setup",
                                    f["finished_setup"], f["signed_up"], pf["finished_setup"], pf["signed_up"]))
-        sign_lines.append(step("read or practised on day one", f["practised"], new, pf["practised"], pnew))
+        sign_lines.append(step("read or practiced on day one", f["practised"], new, pf["practised"], pnew))
         # Guests never see the welcome setup, so only people who signed up can drop out there.
         drops = {
             "left without signing up or continuing as a guest": new - got_in,
             "signed up but didn't finish the welcome setup": f["signed_up"] - f["finished_setup"],
-            "got in but didn't read or practise on day one": got_in - f["practised"],
+            "got in but didn't read or practice on day one": got_in - f["practised"],
         }
         reason, lost = max(drops.items(), key=lambda kv: kv[1])
         sign_lines.append(f"Biggest drop: **{n(lost)} of {n(new)} new people {reason}.**")
         if f["returning"]:
             sign_lines.append(f"Returning users: {n(f['returning'])}, of whom {n(f['returning_practised'])} "
-                              "read or practised on day one")
+                              "read or practiced on day one")
         if d(prev["start"]) < tracking_start + dt.timedelta(days=14):
             sign_lines.append("_The first two weeks after the launch count existing users updating the app as "
                               "new installs, so that period looks better than it was._")
