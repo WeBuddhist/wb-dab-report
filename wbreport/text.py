@@ -21,8 +21,6 @@ LINK = re.compile(r"://|www\.|discord\.gg|discord(?:app)?\.com/invite", re.IGNOR
 LANGUAGE_NAMES = {"bo": "Tibetan", "en": "English", "zh": "Chinese", "hi": "Hindi", "pi": "Pali", "ne": "Nepali"}
 MAIN_LANGUAGES = ("en", "bo", "zh")
 
-# Airbridge's keys for the channels people ask about. Others are shown as Airbridge names them.
-CHANNEL_NAMES = {"unattributed": "Organic", "google.adwords": "Google Ads", "$$default$$": "Links without a channel"}
 EXTRAS_COLOR = 0x99AAB5
 
 
@@ -201,6 +199,19 @@ def what_changed(s: dict) -> str:
     return sentence + "."
 
 
+def airbridge_downloads(x: dict | None) -> int | None:
+    """Downloads from Airbridge (installs that were opened at least once), or None when Airbridge isn't set up
+    or couldn't be fetched. The summary shows downloads only from Airbridge, so there's one downloads number."""
+    i = (x or {}).get("installs")
+    return sum(r["installs"] for r in i["channels"]) if i else None
+
+
+def downloads_note(x: dict | None) -> str:
+    """Footer note naming where the downloads number comes from, or '' when it isn't shown."""
+    i = (x or {}).get("installs")
+    return f" · Downloads: Airbridge, days in {i['timezone']}" if i else ""
+
+
 def tracking_start_label() -> str:  # "25 Sep"
     start = config.TRACKING_START
     return f"{start.day} {start:%b}"
@@ -222,9 +233,9 @@ def daily_payload(s: dict, dashboard_url: str = config.DASHBOARD_URL, extras: di
         return f"⏱️ **{minutes(s['typical_secs'][i])}** median time in the app"
 
     new, total = s["new"][i], s["people"][i]
+    downloads = airbridge_downloads(extras)
     lines += [
-        "\n".join([
-            line("📲", "downloads", "installs"),
+        "\n".join(([f"📲 **{n(downloads)}** downloads"] if downloads is not None else []) + [
             line("🙏", "practiced (reading, plans, mala or timer)", "practised"),
             time_line(),
         ]),
@@ -244,7 +255,7 @@ def daily_payload(s: dict, dashboard_url: str = config.DASHBOARD_URL, extras: di
         "color": color,
         "description": "\n\n".join(lines),
         "footer": {"text": "Mobile app (iPhone, iPad, Android) · A day runs 5:30 AM–5:30 AM IST · "
-                           "Time counts only while the app is on screen"},
+                           "Time counts only while the app is on screen" + downloads_note(extras)},
     }]
     more = extras_embed(extras, "daily")
     if more:
@@ -318,10 +329,11 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
         header = f"**🗓️ Monthly report · {start:%B} (1–{end.day} so far)**"
     else:
         header = f"**🗓️ Monthly report · {start:%B %Y}**"
+    downloads = airbridge_downloads(extras)
     summary = [
         header,
         "",
-        f"📲 **{n(cur.get('installs', 0))}** downloads",
+        *([f"📲 **{n(downloads)}** downloads"] if downloads is not None else []),
         f"🙏 **{n(cur.get('practised', 0))}** practiced (reading, plans, mala or timer)",
         f"⏱️ **{minutes(cur['typical_secs'])}** median time in the app a day",
         "",
@@ -331,8 +343,11 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
     ]
     if not weekly:
         t = cur.get("totals") or {}
-        summary += ["", f"**Total since {tracking_start_label()}:** **{n(t.get('people', 0))}** users · "
-                        f"**{n(t.get('installs', 0))}** downloads"]
+        since = ((extras or {}).get("installs") or {}).get("total_since")
+        total_line = f"**Total since {tracking_start_label()}:** **{n(t.get('people', 0))}** users"
+        if since is not None:
+            total_line += f" · **{n(since)}** downloads"
+        summary += ["", total_line]
     content = "\n".join(summary)
 
     # --- People ---
@@ -419,7 +434,8 @@ def period_payload(kind: str, cur: dict, prev: dict, tracking_start: dt.date = c
 
     span = "Mon–Sun weeks" if weekly else "Calendar months"
     footer = (f"Mobile app · {span}; a day runs 5:30 AM–5:30 AM IST · Counts are people, not visits · "
-              "Time counts only while the app is on screen") + (f" · {footer_note}" if footer_note else "")
+              "Time counts only while the app is on screen" + downloads_note(extras)) + \
+        (f" · {footer_note}" if footer_note else "")
 
     color = WEEKLY_COLOR if weekly else MONTHLY_COLOR
     sections = [("👥 People", people_lines), ("📖 What people did", did_lines),
@@ -464,25 +480,6 @@ def _crash_free(block: dict) -> float | None:
     return 100 * (1 - block["crashed"] / block["active"]) if block["active"] else None
 
 
-def _channel(key: str) -> str:
-    # Channel names come from tracking links, which anyone can make up, so they go through title().
-    return CHANNEL_NAMES.get(key) or title(key or "unknown")
-
-
-def installs_lines(x: dict, against: str) -> list[str]:
-    rows = sorted((r for r in x["channels"] if r["installs"] > 0), key=lambda r: -r["installs"])
-    total = sum(r["installs"] for r in rows)
-    if not total:
-        return [f"📥 **No installs** recorded by Airbridge · {against}: {n(x['prev_total'])}"]
-    parts = [f"{_channel(r['channel'])} {pct(r['installs'], total)}" for r in rows[:3]]
-    rest = total - sum(r["installs"] for r in rows[:3])
-    if rest:
-        parts.append(f"other {pct(rest, total)}")
-    masked = " (Meta rounds some counts down)" if any(r["masked"] for r in rows) else ""
-    return [f"📥 **{n(total)} installs** · {change(total, x['prev_total'], against)}",
-            "Came from: " + " · ".join(parts) + masked]
-
-
 def crash_lines(c: dict, when: str, against: str) -> list[str]:
     cur = c["cur"]
     platforms = [f"{name} {pct1(100 * (1 - k / a))}" for name, (a, k) in cur["by_platform"].items() if a]
@@ -511,12 +508,6 @@ def extras_embed(x: dict | None, kind: str, prev_name: str = "") -> dict | None:
         return None
     blocks, sources, footer = [], [], []
     daily = kind == "daily"
-    if x.get("installs"):
-        i = x["installs"]
-        against = f"{d(i['start']) - dt.timedelta(days=1):%a}" if daily else prev_name
-        blocks.append(installs_lines(i, against))
-        sources.append("Installs")
-        footer.append(f"Installs: Airbridge, days in {i['timezone']}")
     if x.get("crashes"):
         c = x["crashes"]
         start, end = d(c["start"]), d(c["end"])

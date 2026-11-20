@@ -54,13 +54,16 @@ def _airbridge(report: str, cur: Period, prev: Period, today: dt.date, picked: b
         # Airbridge's days run in the app's timezone, so "yesterday" is yesterday there.
         day = _app_today(tz_name) - DAY
         cur, prev = Period(day, day + DAY), Period(day - DAY, day)
-    return {
+    out = {
         "timezone": tz_name,
         "start": cur.start.isoformat(),
         "end": cur.last.isoformat(),
         "channels": airbridge.installs_by_channel(token, app, cur.start, cur.last),
-        "prev_total": sum(r["installs"] for r in airbridge.installs_by_channel(token, app, prev.start, prev.last)),
     }
+    if report == "monthly":  # "Total since 25 Sep" in the monthly summary
+        out["total_since"] = sum(r["installs"] for r in
+                                 airbridge.installs_by_channel(token, app, config.TRACKING_START, cur.last))
+    return out
 
 
 # ---------- Firebase ----------

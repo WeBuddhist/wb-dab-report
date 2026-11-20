@@ -1,6 +1,6 @@
 # wb-dab-report
 
-Posts WeBuddhist app analytics from PostHog to the team's Discord channel, written for people without an analytics background. Once they're set up, the reports also show installs by channel (Airbridge) and crash-free users and notification delivery (Firebase): see [Other sources](#other-sources-airbridge-and-firebase). Everything is about the mobile app.
+Posts WeBuddhist app analytics from PostHog to the team's Discord channel, written for people without an analytics background. Once they're set up, the reports also show downloads (Airbridge) and crash-free users and notification delivery (Firebase): see [Other sources](#other-sources-airbridge-and-firebase). Everything is about the mobile app.
 
 | Report  | When (IST)                | Cron (UTC)    | Covers                                   | Compared with                  |
 |---------|---------------------------|---------------|------------------------------------------|--------------------------------|
@@ -30,7 +30,7 @@ Secrets go under **Settings > Secrets and variables > Actions > Secrets**, varia
 
 | Source | Reports | What it shows | Settings |
 |---|---|---|---|
-| Airbridge | All | Installs and the top channels they came from | Secret `AIRBRIDGE_API_TOKEN`; variables `AIRBRIDGE_APP`, `AIRBRIDGE_TIMEZONE` |
+| Airbridge | All | Downloads | Secret `AIRBRIDGE_API_TOKEN`; variables `AIRBRIDGE_APP`, `AIRBRIDGE_TIMEZONE` |
 | Firebase Crashlytics | All | Crash-free users, per platform | Variables `FIREBASE_PROJECT_ID`, `BIGQUERY_LOCATION`, plus the Google Cloud sign-in below |
 | Firebase Cloud Messaging | All | Share of notifications that reached Android phones | Variables `FIREBASE_PROJECT_ID`, `FIREBASE_ANDROID_APP_ID`, plus the Google Cloud sign-in below |
 
@@ -119,15 +119,14 @@ All figures are counts of people or medians across people, computed inside PostH
 | Returning | People who used the app in the period and had already used it before: users minus new |
 | Daily / weekly / monthly active users | Same as "People who opened the app": unique people with at least one screen view in the day, week or month. Shown as the total after new and returning users |
 | Practiced (daily) | Unique people who, on the report day, opened a text in the reader, opened a plan day, started the mala or started the timer |
-| Downloads (daily) | Unique people with an "Application Installed" event on the report day. It includes installs where the app started in the background and nobody opened it (about 1 in 5 on Android), so it is a little higher than real downloads. Exact numbers are in the Play Console and App Store Connect |
-| Total since 25 Sep (monthly report only) | Users: unique people with at least one screen view since tracking started on 25 Sep. Downloads: unique people with an "Application Installed" event since then, which also includes existing users who updated from versions older than 2.31 in late September |
+| Downloads | Airbridge's app installs in the period (its "Installs (App)", in the app's timezone): first installs plus re-installs, counted once the app is opened, once per device per day. Downloads that are never opened aren't counted; the Play Console and App Store Connect have those. Shown only when Airbridge is set up. The latest day can still rise a little after Airbridge's 9 PM UTC correction |
+| Total since 25 Sep (monthly report only) | Users: unique people with at least one screen view since tracking started on 25 Sep. Downloads: Airbridge's app installs from 25 Sep to the end of the month |
 | Came back | Of last week's (or month's) new people, the share who opened the app again in this one |
 | Time on screen | Each person's time with the app on screen that day: within each app session, the time from one event to the next, leaving out stretches in the background (from the app going to the background until it opens again). The report shows the middle person (half had it on screen longer, half shorter), the share under a minute and the share at half an hour or more. Times are rounded to what people can picture (45 sec, 4½ min, 12 min), and changes are given in minutes from those rounded figures |
 | Read a text, joined a live session, opened a plan | Unique people who opened the reader, entered a live group session, or opened a plan |
 | Phones | Each person counted once, under the platform they used most |
 | Main reading language | Each reader counted once, under the language they read in most |
 | From opening the app to first practice | New people who installed in the period, and what each did within 24 hours: installs that never showed a screen (the app started in the background) and returning users (an existing account, so no welcome setup) are shown on their own and left out of the funnel; of the new people who opened the app: signed up (a login followed by the welcome setup, which only new accounts get) or continued as a guest; people who signed up and finished the welcome setup; read, joined a live session, opened a plan day, or started the mala or timer. Steps are checked one by one, not in a fixed order |
-| Installs, came from | Airbridge's app installs, by channel, in the app's timezone. "Organic" means no ad or tracking link. Meta's privacy rules round some of its counts down |
 | Crash-free | Of the app installations that opened the app (Firebase sessions), the share that had no crash closing the app. Firebase exports this once a day at no fixed time, so the daily report shows the day before yesterday, and a week or month stops there too |
 | Notifications reached | Firebase's share of notifications delivered to Android phones that share usage data with Google, weighted across all messages. It runs up to 5 days behind and has no iPhone figures. Weekly and monthly reports show the latest days Firebase has |
 
